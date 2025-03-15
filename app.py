@@ -78,27 +78,41 @@ def send_email(to_email, subject, body):
         return False
 
 
-def send_otp_email(email, otp, purpose="verification"):
+def send_otp_email(email, otp, purpose="verification", user_name=None):
     """Send OTP verification email."""
-    subject_mapping = {
-        "verification": "Your Email Verification Code",
-        "login": "Your Login Verification Code",
-        "password_reset": "Your Password Reset Code",
-        "email_change": "Your Email Change Verification Code"
-    }
-
-    subject = subject_mapping.get(purpose, "Your Verification Code")
-
+    subject = "Weez OTP Verification Code"
+    
+    # Use a generic greeting if no name is provided
+    greeting = f"Dear {user_name}," if user_name else "Dear Weez User,"
+    
+    # Map purpose to more user-friendly descriptions
+    purpose_display = {
+        "verification": "account verification",
+        "login": "login attempt",
+        "password_reset": "password reset",
+        "email_change": "email change"
+    }.get(purpose, "verification")
+    
     body = f"""
-    Hello,
-
-    Your {purpose} code is: {otp}
-
-    This code will expire in 10 minutes.
-
-    Thank you,
-    Your App Team
+    {greeting}
+    
+    Welcome to Weez! To ensure the security of your account, please verify your email using the One-Time Password (OTP) below:
+    
+    Your OTP: {otp}
+    
+    This OTP is valid for 10 minutes and can only be used once.
+    
+    Important Security Guidelines:
+    • Do not share this OTP with anyone, including Weez support staff.
+    • Do not enter your OTP on any unofficial websites or third-party apps.
+    • If you didn't request this OTP for {purpose_display}, please ignore this email or contact our support team immediately.
+    
+    If you have any questions, feel free to reach out to us at weatweez@gmail.com.
+    
+    Best regards,
+    The Weez Team
     """
+    
     return send_email(email, subject, body)
 
 
