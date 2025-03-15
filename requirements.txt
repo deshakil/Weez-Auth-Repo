@@ -1,5 +1,5 @@
 flask==3.0.3
-flask_cors=5.0.0
-pyjwt-2.10.1
+flask_cors==5.0.0
+pyjwt==2.10.1
 azure.storage.blob==12.23
 
