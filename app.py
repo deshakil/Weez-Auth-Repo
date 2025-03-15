@@ -2,7 +2,7 @@ from flask import Flask, request, jsonify, session, send_file
 from flask_cors import CORS
 import os
 import jwt
-from datetime import datetime, timedelta, timezone  # Added timezone import
+from datetime import datetime, timedelta, timezone
 import hashlib
 import uuid
 import json
@@ -19,7 +19,7 @@ app = Flask(__name__)  # Use environment variable in production
 CORS(app)  # Enable Cross-Origin Resource Sharing
 
 # Azure Blob Storage configuration
-AZURE_STORAGE_CONNECTION_STRING = os.getenv('AZURE_STORAGE_CONNECTION_STRING_1')
+AZURE_STORAGE_CONNECTION_STRING = os.getenv('AZURE_STORAGE_CONNECTION_STRING')
 CONTAINER_NAME = "weez-users-info"
 
 # Email configuration for OTP
@@ -81,10 +81,10 @@ def send_email(to_email, subject, body):
 def send_otp_email(email, otp, purpose="verification", user_name=None):
     """Send OTP verification email."""
     subject = "Weez OTP Verification Code"
-    
+
     # Use a generic greeting if no name is provided
     greeting = f"Dear {user_name}," if user_name else "Dear Weez User,"
-    
+
     # Map purpose to more user-friendly descriptions
     purpose_display = {
         "verification": "account verification",
@@ -92,28 +92,41 @@ def send_otp_email(email, otp, purpose="verification", user_name=None):
         "password_reset": "password reset",
         "email_change": "email change"
     }.get(purpose, "verification")
-    
+
     body = f"""
     {greeting}
-    
+
     Welcome to Weez! To ensure the security of your account, please verify your email using the One-Time Password (OTP) below:
-    
+
     Your OTP: {otp}
-    
+
     This OTP is valid for 10 minutes and can only be used once.
-    
+
     Important Security Guidelines:
     • Do not share this OTP with anyone, including Weez support staff.
     • Do not enter your OTP on any unofficial websites or third-party apps.
     • If you didn't request this OTP for {purpose_display}, please ignore this email or contact our support team immediately.
-    
+
     If you have any questions, feel free to reach out to us at weatweez@gmail.com.
-    
+
     Best regards,
     The Weez Team
     """
-    
+
     return send_email(email, subject, body)
+
+
+def generate_username_from_email(email):
+    """Generate a username from email that preserves more of the original email structure."""
+    # Replace @ with . and remove any special characters
+    username = email.replace('@', '.')
+    username = ''.join(c for c in username if c.isalnum() or c == '.')
+    
+    # If username is too long, truncate it
+    if len(username) > 20:
+        username = username[:20]
+    
+    return username
 
 
 @app.route('/api/register', methods=['POST'])
@@ -127,12 +140,15 @@ def register():
     password = data['password']
     email = data['email']
 
-    # Generate a username based on email (you can change this logic)
-    username = email.split('@')[0] + str(random.randint(100, 999))
-
-    # Check if username already exists
+    # Generate a username based on email (more similar to the full email)
+    base_username = generate_username_from_email(email)
+    username = base_username
+    
+    # Check if username already exists and add numbers if needed
+    counter = 1
     while username in users_db or username in unverified_users:
-        username = email.split('@')[0] + str(random.randint(100, 999))
+        username = f"{base_username}{counter}"
+        counter += 1
 
     # Check if email is already registered
     for user_data in users_db.values():
