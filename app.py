@@ -19,7 +19,7 @@ app = Flask(__name__)  # Use environment variable in production
 CORS(app)  # Enable Cross-Origin Resource Sharing
 
 # Azure Blob Storage configuration
-AZURE_STORAGE_CONNECTION_STRING = os.getenv('AZURE_STORAGE_CONNECTION_STRING')
+AZURE_STORAGE_CONNECTION_STRING = os.getenv('AZURE_STORAGE_CONNECTION_STRING_1')
 CONTAINER_NAME = "weez-users-info"
 
 # Email configuration for OTP
