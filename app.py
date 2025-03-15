@@ -141,7 +141,7 @@ def register():
     email = data['email']
 
     # Generate a username based on email (more similar to the full email)
-    
+    base_username=email
     username = email
     
     # Check if username already exists and add numbers if needed
