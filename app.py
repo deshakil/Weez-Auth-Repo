@@ -116,19 +116,6 @@ def send_otp_email(email, otp, purpose="verification", user_name=None):
     return send_email(email, subject, body)
 
 
-def generate_username_from_email(email):
-    """Generate a username from email that preserves more of the original email structure."""
-    # Replace @ with . and remove any special characters
-    username = email.replace('@', '.')
-    username = ''.join(c for c in username if c.isalnum() or c == '.')
-    
-    # If username is too long, truncate it
-    if len(username) > 20:
-        username = username[:20]
-    
-    return username
-
-
 @app.route('/api/register', methods=['POST'])
 def register():
     data = request.get_json()
@@ -140,24 +127,15 @@ def register():
     password = data['password']
     email = data['email']
 
-    # Generate a username based on email (more similar to the full email)
-    base_username=email
+    # Use email as username
     username = email
-    
-    # Check if username already exists and add numbers if needed
-    counter = 1
-    while username in users_db or username in unverified_users:
-        username = f"{base_username}{counter}"
-        counter += 1
 
     # Check if email is already registered
-    for user_data in users_db.values():
-        if user_data.get('email') == email:
-            return jsonify({'error': 'Email already registered'}), 409
+    if username in users_db:
+        return jsonify({'error': 'Email already registered'}), 409
 
-    for user_data in unverified_users.values():
-        if user_data.get('email') == email:
-            return jsonify({'error': 'Email already registered but not verified'}), 409
+    if username in unverified_users:
+        return jsonify({'error': 'Email already registered but not verified'}), 409
 
     # Hash the password before storing
     password_hash = hashlib.sha256(password.encode()).hexdigest()
@@ -195,13 +173,13 @@ def verify_email():
     data = request.get_json()
 
     if not data or not data.get('username') or not data.get('otp'):
-        return jsonify({'error': 'Username and OTP are required'}), 400
+        return jsonify({'error': 'Email and OTP are required'}), 400
 
     username = data['username']
     otp = data['otp']
 
     if username not in unverified_users:
-        return jsonify({'error': 'Invalid username'}), 404
+        return jsonify({'error': 'Invalid email'}), 404
 
     if username not in otps:
         return jsonify({'error': 'No OTP found for this user'}), 404
@@ -230,12 +208,12 @@ def complete_profile():
     data = request.get_json()
 
     if not data or not data.get('username'):
-        return jsonify({'error': 'Username is required'}), 400
+        return jsonify({'error': 'Email is required'}), 400
 
     username = data['username']
 
     if username not in incomplete_profiles:
-        return jsonify({'error': 'Invalid username or email already verified'}), 404
+        return jsonify({'error': 'Invalid email or email already verified'}), 404
 
     # Required profile fields
     required_fields = ['profession', 'gender', 'age', 'bio']
@@ -288,7 +266,7 @@ def resend_otp():
     data = request.get_json()
 
     if not data or not data.get('username'):
-        return jsonify({'error': 'Username is required'}), 400
+        return jsonify({'error': 'Email is required'}), 400
 
     username = data['username']
 
@@ -308,7 +286,7 @@ def resend_otp():
         user_email = users_db[username]['email']
         purpose = "login"
     else:
-        return jsonify({'error': 'Invalid username or no pending verification'}), 404
+        return jsonify({'error': 'Invalid email or no pending verification'}), 404
 
     # Generate new OTP
     otp = generate_otp()
@@ -343,14 +321,10 @@ def login():
     email = data['email']
     password = data['password']
 
-    # Find user by email
-    username = None
-    for user, user_data in users_db.items():
-        if user_data.get('email') == email:
-            username = user
-            break
+    # Use email as username
+    username = email
 
-    if not username:
+    if username not in users_db:
         return jsonify({'error': 'Email not registered or invalid credentials'}), 401
 
     # Check if user is in incomplete profiles
@@ -392,13 +366,13 @@ def verify_login():
     data = request.get_json()
 
     if not data or not data.get('username') or not data.get('otp'):
-        return jsonify({'error': 'Username and OTP are required'}), 400
+        return jsonify({'error': 'Email and OTP are required'}), 400
 
     username = data['username']
     otp = data['otp']
 
     if username not in users_db:
-        return jsonify({'error': 'Invalid username'}), 404
+        return jsonify({'error': 'Invalid email'}), 404
 
     if username not in otps or not otps[username].get('for_login'):
         return jsonify({'error': 'No login verification request found'}), 404
@@ -442,15 +416,9 @@ def forgot_password():
         return jsonify({'error': 'Email is required'}), 400
 
     email = data['email']
-    found_username = None
+    username = email
 
-    # Find user by email
-    for username, user_data in users_db.items():
-        if user_data.get('email') == email:
-            found_username = username
-            break
-
-    if not found_username:
+    if username not in users_db:
         # Don't reveal that email doesn't exist for security reasons
         return jsonify({'message': 'If the email exists, a reset code has been sent.'}), 200
 
@@ -459,7 +427,7 @@ def forgot_password():
     otp_expiry = datetime.now(timezone.utc) + timedelta(minutes=10)
 
     # Store OTP
-    otps[found_username] = {
+    otps[username] = {
         'otp': otp,
         'expires': otp_expiry,
         'for_password_reset': True
@@ -471,7 +439,7 @@ def forgot_password():
 
     return jsonify({
         'message': 'Password reset code sent to your email',
-        'username': found_username
+        'username': username
     }), 200
 
 
@@ -480,14 +448,14 @@ def reset_password():
     data = request.get_json()
 
     if not data or not data.get('username') or not data.get('otp') or not data.get('new_password'):
-        return jsonify({'error': 'Username, OTP, and new password are required'}), 400
+        return jsonify({'error': 'Email, OTP, and new password are required'}), 400
 
     username = data['username']
     otp = data['otp']
     new_password = data['new_password']
 
     if username not in users_db:
-        return jsonify({'error': 'Invalid username'}), 404
+        return jsonify({'error': 'Invalid email'}), 404
 
     if username not in otps or not otps[username].get('for_password_reset'):
         return jsonify({'error': 'No valid password reset request found'}), 404
@@ -610,7 +578,7 @@ def get_user_profile():
         user_info_blob = blob_client.download_blob()
         user_info = json.loads(user_info_blob.readall().decode('utf-8'))
 
-        # Add username to response
+        # Add username to response (which is the email)
         user_info['username'] = username
 
         # Check if profile picture exists
@@ -691,7 +659,7 @@ def upload_profile_picture():
         # Upload profile picture to Azure Blob Storage
         blob_client = blob_service_client.get_blob_client(
             container=CONTAINER_NAME,
-            blob=f"{username}/profilePic.png"  # Changed from profile.png to profilePic.png
+            blob=f"{username}/profilePic.png"
         )
 
         blob_client.upload_blob(
@@ -718,7 +686,7 @@ def get_profile_picture():
         # Get profile picture from Azure Blob Storage
         blob_client = blob_service_client.get_blob_client(
             container=CONTAINER_NAME,
-            blob=f"{target_username}/profilePic.png"  # Changed from profile.png to profilePic.png
+            blob=f"{target_username}/profilePic.png"
         )
 
         # Check if blob exists
@@ -741,6 +709,8 @@ def get_profile_picture():
 
 @app.route('/api/change-email', methods=['POST'])
 def change_email():
+    # This route is kept for compatibility, but in this model
+    # changing email means changing the username too
     username, error = authenticate_request()
     if error:
         return jsonify({'error': error[0]}), error[1]
@@ -752,9 +722,8 @@ def change_email():
     new_email = data['new_email']
 
     # Check if email is already registered
-    for user, user_data in users_db.items():
-        if user != username and user_data.get('email') == new_email:
-            return jsonify({'error': 'Email already registered'}), 409
+    if new_email in users_db:
+        return jsonify({'error': 'Email already registered'}), 409
 
     # First verify current email
     # Generate OTP for current email verification
@@ -770,7 +739,7 @@ def change_email():
     }
 
     # Send OTP to current email
-    if not send_otp_email(users_db[username]['email'], otp, "email_change"):
+    if not send_otp_email(username, otp, "email_change"):
         return jsonify({'error': 'Failed to send verification email'}), 500
 
     return jsonify({'message': 'Verification code sent to your current email'}), 200
@@ -843,10 +812,6 @@ def verify_email_change():
 
     new_email = otps[username]['new_email']
 
-    # Update email in users_db
-    users_db[username]['email'] = new_email
-
-    # Update email in userInfo.json
     try:
         # Get current userInfo.json
         blob_client = blob_service_client.get_blob_client(
@@ -857,8 +822,146 @@ def verify_email_change():
         user_info_blob = blob_client.download_blob()
         user_info = json.loads(user_info_blob.readall().decode('utf-8'))
 
-        # Update email
+        # Create a copy of the user's data
+        new_user_data = users_db[username].copy()
+
+        # Update email in the copy
+        new_user_data['email'] = new_email
+
+        # Add the new user with new email as username
+        users_db[new_email] = new_user_data
+
+        # Update email in userInfo
         user_info['email'] = new_email
+
+        # Upload userInfo to the new location (new email as username)
+        new_blob_client = blob_service_client.get_blob_client(
+            container=CONTAINER_NAME,
+            blob=f"{new_email}/userInfo.json"
+        )
+
+        new_blob_client.upload_blob(
+            json.dumps(user_info),
+            overwrite=True,
+            content_settings=ContentSettings(content_type='application/json')
+        )
+
+        # Copy profile picture if it exists
+        try:
+            profile_pic_blob = blob_service_client.get_blob_client(
+                container=CONTAINER_NAME,
+                blob=f"{username}/profilePic.png"
+            )
+
+            if profile_pic_blob.exists():
+                # Download existing profile picture
+                pic_data = profile_pic_blob.download_blob().readall()
+
+                # Upload to new location
+                new_pic_blob = blob_service_client.get_blob_client(
+                    container=CONTAINER_NAME,
+                    blob=f"{new_email}/profilePic.png"
+                )
+
+                new_pic_blob.upload_blob(
+                    pic_data,
+                    overwrite=True,
+                    content_settings=ContentSettings(content_type='image/png')
+                )
+        except Exception as e:
+            print(f"Error copying profile picture: {str(e)}")
+
+        # Remove old user data
+        del users_db[username]
+
+        # Remove old user files (optional, can be kept for backup)
+        # Delete only if the copy
+        # Remove old user files (optional, can be kept for backup)
+        # Delete only if the copy was successful
+        try:
+            # Delete old user info
+            blob_client.delete_blob()
+
+            # Delete old profile picture if it exists
+            try:
+                profile_pic_blob = blob_service_client.get_blob_client(
+                    container=CONTAINER_NAME,
+                    blob=f"{username}/profilePic.png"
+                )
+                if profile_pic_blob.exists():
+                    profile_pic_blob.delete_blob()
+            except Exception as e:
+                print(f"Error deleting old profile picture: {str(e)}")
+        except Exception as e:
+            print(f"Error deleting old user data: {str(e)}")
+
+        # Delete OTP data
+        del otps[username]
+
+        # Invalidate all tokens for the old username
+        for token_id in list(active_tokens.keys()):
+            if active_tokens[token_id]['username'] == username:
+                del active_tokens[token_id]
+
+        # Generate new JWT token with new username
+        token = jwt.encode({
+            'sub': new_email,
+            'iat': datetime.now(timezone.utc),
+            'exp': datetime.now(timezone.utc) + timedelta(hours=24)
+        }, app.secret_key, algorithm='HS256')
+
+        # Store token in active tokens
+        token_id = str(uuid.uuid4())
+        active_tokens[token_id] = {
+            'username': new_email,
+            'expires': (datetime.now(timezone.utc) + timedelta(hours=24)).isoformat()
+        }
+
+        return jsonify({
+            'message': 'Email changed successfully',
+            'new_username': new_email,
+            'token': token,
+            'token_id': token_id
+        }), 200
+    except Exception as e:
+        return jsonify({'error': f'Error changing email: {str(e)}'}), 500
+
+
+@app.route('/api/change-password', methods=['POST'])
+def change_password():
+    username, error = authenticate_request()
+    if error:
+        return jsonify({'error': error[0]}), error[1]
+
+    data = request.get_json()
+    if not data or not data.get('current_password') or not data.get('new_password'):
+        return jsonify({'error': 'Current password and new password are required'}), 400
+
+    current_password = data['current_password']
+    new_password = data['new_password']
+
+    # Verify current password
+    current_password_hash = hashlib.sha256(current_password.encode()).hexdigest()
+    if users_db[username]['password_hash'] != current_password_hash:
+        return jsonify({'error': 'Current password is incorrect'}), 401
+
+    # Update password
+    new_password_hash = hashlib.sha256(new_password.encode()).hexdigest()
+    users_db[username]['password_hash'] = new_password_hash
+
+    try:
+        # Update userInfo.json with last password change timestamp
+        blob_client = blob_service_client.get_blob_client(
+            container=CONTAINER_NAME,
+            blob=f"{username}/userInfo.json"
+        )
+
+        user_info_blob = blob_client.download_blob()
+        user_info = json.loads(user_info_blob.readall().decode('utf-8'))
+
+        # We don't want to store the password hash in the user info file
+        # But we're updating the last modified time
+        user_info['last_password_change'] = datetime.now().isoformat()
 
         # Upload updated userInfo.json
         blob_client.upload_blob(
@@ -867,13 +970,157 @@ def verify_email_change():
             content_settings=ContentSettings(content_type='application/json')
         )
 
-        # Remove OTP
-        del otps[username]
+        # Invalidate all tokens for this user except the current one
+        current_token_id = request.get_json().get('token_id')
+        for token_id in list(active_tokens.keys()):
+            if active_tokens[token_id]['username'] == username and token_id != current_token_id:
+                del active_tokens[token_id]
 
-        return jsonify({'message': 'Email changed successfully'}), 200
+        return jsonify({'message': 'Password changed successfully'}), 200
     except Exception as e:
-        return jsonify({'error': f'Error updating email: {str(e)}'}), 500
+        return jsonify({'error': f'Error updating password: {str(e)}'}), 500
+
+
+@app.route('/api/delete-account', methods=['POST'])
+def delete_account():
+    username, error = authenticate_request()
+    if error:
+        return jsonify({'error': error[0]}), error[1]
+
+    data = request.get_json()
+    if not data or not data.get('password'):
+        return jsonify({'error': 'Password is required to delete your account'}), 400
+
+    password = data['password']
+
+    # Verify password
+    password_hash = hashlib.sha256(password.encode()).hexdigest()
+    if users_db[username]['password_hash'] != password_hash:
+        return jsonify({'error': 'Password is incorrect'}), 401
+
+    try:
+        # Delete all user files from Azure Blob Storage
+        blob_list = blob_service_client.get_container_client(CONTAINER_NAME).list_blobs(name_starts_with=f"{username}/")
+        for blob in blob_list:
+            blob_service_client.get_blob_client(container=CONTAINER_NAME, blob=blob.name).delete_blob()
+
+        # Remove user from users_db
+        del users_db[username]
+
+        # Invalidate all tokens for this user
+        for token_id in list(active_tokens.keys()):
+            if active_tokens[token_id]['username'] == username:
+                del active_tokens[token_id]
+
+        return jsonify({'message': 'Account deleted successfully'}), 200
+    except Exception as e:
+        return jsonify({'error': f'Error deleting account: {str(e)}'}), 500
+
+
+@app.route('/api/users', methods=['GET'])
+def get_users():
+    username, error = authenticate_request()
+    if error:
+        return jsonify({'error': error[0]}), error[1]
+
+    try:
+        # This would typically have pagination and filtering in a production app
+        users = []
+        user_blobs = blob_service_client.get_container_client(CONTAINER_NAME).list_blobs()
+
+        # Get unique user folders by splitting blob names and taking the first part
+        user_folders = set()
+        for blob in user_blobs:
+            parts = blob.name.split('/')
+            if len(parts) > 1:
+                user_folders.add(parts[0])
+
+        # Get basic info for each user
+        for user_folder in user_folders:
+            try:
+                blob_client = blob_service_client.get_blob_client(
+                    container=CONTAINER_NAME,
+                    blob=f"{user_folder}/userInfo.json"
+                )
+
+                user_info_blob = blob_client.download_blob()
+                user_info = json.loads(user_info_blob.readall().decode('utf-8'))
+
+                # Check if profile picture exists
+                has_profile_pic = False
+                try:
+                    profile_pic_blob = blob_service_client.get_blob_client(
+                        container=CONTAINER_NAME,
+                        blob=f"{user_folder}/profilePic.png"
+                    )
+                    has_profile_pic = profile_pic_blob.exists()
+                except Exception:
+                    pass
+
+                # Add minimal user info
+                users.append({
+                    'username': user_folder,
+                    'full_name': user_info.get('full_name', ''),
+                    'profession': user_info.get('profession', ''),
+                    'has_profile_pic': has_profile_pic
+                })
+            except Exception as e:
+                print(f"Error getting user info for {user_folder}: {str(e)}")
+
+        return jsonify(users), 200
+    except Exception as e:
+        return jsonify({'error': f'Error retrieving users: {str(e)}'}), 500
+
+
+@app.route('/api/health', methods=['GET'])
+def health_check():
+    """Health check endpoint for monitoring."""
+    try:
+        # Check Azure Blob Storage connection
+        container_client = blob_service_client.get_container_client(CONTAINER_NAME)
+        container_client.exists()
+
+        return jsonify({
+            'status': 'healthy',
+            'timestamp': datetime.now().isoformat()
+        }), 200
+    except Exception as e:
+        return jsonify({
+            'status': 'unhealthy',
+            'error': str(e),
+            'timestamp': datetime.now().isoformat()
+        }), 500
+
+
+# Generate a secret key for the app if not provided
+if not app.secret_key:
+    app.secret_key = os.getenv('SECRET_KEY', os.urandom(24))
+
+
+# Remove expired OTPs and tokens periodically
+def cleanup_expired_data():
+    """Remove expired OTPs and tokens."""
+    current_time = datetime.now(timezone.utc)
+
+    # Clean up expired OTPs
+    for username in list(otps.keys()):
+        if current_time > otps[username]['expires']:
+            del otps[username]
+
+    # Clean up expired tokens
+    for token_id in list(active_tokens.keys()):
+        expires = datetime.fromisoformat(active_tokens[token_id]['expires'])
+        if current_time > expires:
+            del active_tokens[token_id]
+
+
+# Call cleanup on each request
+@app.before_request
+def before_request():
+    cleanup_expired_data()
 
 
 if __name__ == '__main__':
-    app.run(debug=True)
+    port = int(os.getenv('PORT', 5000))
+    debug = os.getenv('FLASK_ENV') == 'development'
+    app.run(host='0.0.0.0', port=port, debug=debug)
