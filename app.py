@@ -171,38 +171,39 @@ def register():
 @app.route('/api/verify-email', methods=['POST'])
 def verify_email():
     data = request.get_json()
-
+    
     if not data or not data.get('username') or not data.get('otp'):
         return jsonify({'error': 'Email and OTP are required'}), 400
-
+    
     username = data['username']
     otp = data['otp']
-
-    if username not in unverified_users:
-        return jsonify({'error': 'Invalid email'}), 404
-
+    
+    # Removed this validation:
+    # if username not in unverified_users:
+    #     return jsonify({'error': 'Invalid email'}), 404
+    
     if username not in otps:
         return jsonify({'error': 'No OTP found for this user'}), 404
-
+    
     if datetime.now(timezone.utc) > otps[username]['expires']:
         del otps[username]
         return jsonify({'error': 'OTP expired. Please request a new one.'}), 401
-
+    
     if otps[username]['otp'] != otp:
         return jsonify({'error': 'Invalid OTP'}), 401
-
-    # Move from unverified to incomplete profiles
-    incomplete_profiles[username] = unverified_users[username]
-    del unverified_users[username]
+    
+    # Check if user exists before removing
+    if username in unverified_users:
+        verified_users[username] = unverified_users[username]
+        del unverified_users[username]
+    
     del otps[username]
-
-    # Return success and indicate that profile completion is needed
+    
     return jsonify({
-        'message': 'Email verified successfully. Please complete your profile.',
+        'message': 'Email verified successfully.',
         'username': username
     }), 200
-
-
+    
 @app.route('/api/complete-profile', methods=['POST'])
 def complete_profile():
     data = request.get_json()
