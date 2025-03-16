@@ -119,91 +119,90 @@ def send_otp_email(email, otp, purpose="verification", user_name=None):
 @app.route('/api/register', methods=['POST'])
 def register():
     data = request.get_json()
+
     if not data or not data.get('fullName') or not data.get('password') or not data.get('email'):
         return jsonify({'error': 'Full name, password, and email are required'}), 400
-    
+
     full_name = data['fullName']
     password = data['password']
     email = data['email']
-    
+
     # Use email as username
     username = email
-    
-    # Check if user blob already exists on Azure
-    try:
-        # Using container_client to check if the user's info.json exists
-        blob_exists = container_client.get_blob_client(blob=f"{username}").exists()
-        
-        if blob_exists:
-            return jsonify({'error': 'Email already registered'}), 409
-    except Exception as e:
-        # Handle any Azure storage exceptions
-        return jsonify({'error': f'Error checking user registration: {str(e)}'}), 500
-    
+
+    # Check if email is already registered
+    if username in users_db:
+        return jsonify({'error': 'Email already registered'}), 409
+
+    if username in unverified_users:
+        return jsonify({'error': 'Email already registered but not verified'}), 409
+
     # Hash the password before storing
     password_hash = hashlib.sha256(password.encode()).hexdigest()
-    
+
     # Generate OTP for email verification
     otp = generate_otp()
     otp_expiry = datetime.now(timezone.utc) + timedelta(minutes=10)
-    
-    # Store OTP and user data temporarily
+
+    # Store user in unverified users
+    unverified_users[username] = {
+        'password_hash': password_hash,
+        'email': email,
+        'full_name': full_name,
+        'created_at': datetime.now().isoformat()
+    }
+
+    # Store OTP
     otps[username] = {
         'otp': otp,
-        'expires': otp_expiry,
-        'user_data': {
-            'password_hash': password_hash,
-            'email': email,
-            'full_name': full_name,
-            'created_at': datetime.now().isoformat()
-        }
+        'expires': otp_expiry
     }
-    
+
     # Send OTP via email
     if not send_otp_email(email, otp, "verification"):
         return jsonify({'error': 'Failed to send verification email'}), 500
-    
+
     return jsonify({
         'message': 'Registration initiated. Please verify your email with the OTP sent.',
         'username': username
     }), 201
 
+
 @app.route('/api/verify-email', methods=['POST'])
 def verify_email():
     data = request.get_json()
-    
+
     if not data or not data.get('username') or not data.get('otp'):
         return jsonify({'error': 'Email and OTP are required'}), 400
-    
+
     username = data['username']
     otp = data['otp']
-    
-    # Removed this validation:
-    # if username not in unverified_users:
-    #     return jsonify({'error': 'Invalid email'}), 404
-    
+
+    if username not in unverified_users:
+        return jsonify({'error': 'Invalid email'}), 404
+
     if username not in otps:
         return jsonify({'error': 'No OTP found for this user'}), 404
-    
+
     if datetime.now(timezone.utc) > otps[username]['expires']:
         del otps[username]
         return jsonify({'error': 'OTP expired. Please request a new one.'}), 401
-    
+
     if otps[username]['otp'] != otp:
         return jsonify({'error': 'Invalid OTP'}), 401
-    
-    # Check if user exists before removing
-    if username in unverified_users:
-        verified_users[username] = unverified_users[username]
-        del unverified_users[username]
-    
+
+    # Move from unverified to incomplete profiles
+    incomplete_profiles[username] = unverified_users[username]
+    del unverified_users[username]
     del otps[username]
-    
+
+    # Return success and indicate that profile completion is needed
     return jsonify({
-        'message': 'Email verified successfully.',
+        'message': 'Email verified successfully. Please complete your profile.',
         'username': username
     }), 200
-    
+
+
 @app.route('/api/complete-profile', methods=['POST'])
 def complete_profile():
     data = request.get_json()
