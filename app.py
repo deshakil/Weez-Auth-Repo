@@ -1074,7 +1074,7 @@ def get_users():
 
 
 @app.route('/api/user-profile/<email>', methods=['GET'])
-def get_user_profile(email):
+def get_user_profile_grok(email):
     try:
         # Sanitize email to prevent path traversal
         if not email or '@' not in email:
