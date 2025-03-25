@@ -1128,7 +1128,7 @@ def get_user_profile_grok(email):
 
 
 @app.route('/api/user-profile/<email>', methods=['PUT'])
-def update_user_profile(email):
+def update_user_profile_grok(email):
     try:
         data = request.get_json()
         blob_client = container_client.get_blob_client(f"{email}/userInfo.json")
@@ -1151,7 +1151,7 @@ def update_user_profile(email):
         return jsonify({"error": "Failed to update profile", "details": str(e)}), 500
 
 @app.route('/api/upload-profile-pic/<email>', methods=['POST'])
-def upload_profile_pic(email):
+def upload_profile_pic_grok(email):
     try:
         if 'profilePic' not in request.files:
             return jsonify({"error": "No file provided"}), 400
