@@ -1081,7 +1081,7 @@ def get_user_profile_grok(email):
             return jsonify({"error": "Invalid email provided"}), 400
 
         # Define blob paths
-        user_info_blob_path = f"{email}/userInfo.js"
+        user_info_blob_path = f"{email}/userInfo.json"
         profile_pic_blob_path = f"{email}/profilePic.png"
 
         # Fetch userInfo.js
