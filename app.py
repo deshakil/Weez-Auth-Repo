@@ -1127,6 +1127,53 @@ def get_user_profile_grok(email):
         return jsonify({"error": "Error Fetching User Details", "details": str(e)}), 500
 
 
+@app.route('/api/user-profile/<email>', methods=['PUT'])
+def update_user_profile(email):
+    try:
+        data = request.get_json()
+        blob_client = container_client.get_blob_client(f"{email}/userInfo.json")
+        
+        # Fetch existing data
+        current_data = json.loads(blob_client.download_blob().readall().decode('utf-8'))
+        
+        # Update only editable fields
+        current_data.update({
+            "full_name": data.get("full_name", current_data["full_name"]),
+            "profession": data.get("profession", current_data["profession"]),
+            "gender": data.get("gender", current_data["gender"]),
+            "bio": data.get("bio", current_data["bio"])
+        })
+        
+        # Upload updated data
+        blob_client.upload_blob(json.dumps(current_data), overwrite=True)
+        return jsonify({"message": "Profile updated successfully"}), 200
+    except Exception as e:
+        return jsonify({"error": "Failed to update profile", "details": str(e)}), 500
+
+@app.route('/api/upload-profile-pic/<email>', methods=['POST'])
+def upload_profile_pic(email):
+    try:
+        if 'profilePic' not in request.files:
+            return jsonify({"error": "No file provided"}), 400
+        
+        file = request.files['profilePic']
+        blob_client = container_client.get_blob_client(f"{email}/profilePic.png")
+        
+        # Upload the new profile picture
+        blob_client.upload_blob(file, overwrite=True)
+        
+        # Generate SAS URL
+        sas_token = blob_client.generate_shared_access_signature(
+            permission="read",
+            expiry=datetime.utcnow() + timedelta(hours=1)
+        )
+        profile_pic_url = f"{blob_client.url}?{sas_token}"
+        
+        return jsonify({"profile_picture_url": profile_pic_url}), 200
+    except Exception as e:
+        return jsonify({"error": "Failed to upload profile picture", "details": str(e)}), 50
+
+
 @app.route('/api/health', methods=['GET'])
 def health_check():
     """Health check endpoint for monitoring."""
