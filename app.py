@@ -21,6 +21,7 @@ CORS(app)  # Enable Cross-Origin Resource Sharing
 # Azure Blob Storage configuration
 AZURE_STORAGE_CONNECTION_STRING = os.getenv('AZURE_STORAGE_CONNECTION_STRING_1')
 CONTAINER_NAME = "weez-users-info"
+DEFAULT_PROFILE_PIC_URL = "https://i.pinimg.com/736x/23/a6/1f/23a61f584822b8c7dbaebdca7c96da3e.jpg"
 
 # Email configuration for OTP
 EMAIL_HOST = os.getenv('EMAIL_HOST')
@@ -31,7 +32,7 @@ EMAIL_FROM = os.getenv('EMAIL_SENDER')
 
 # Initialize the BlobServiceClient
 blob_service_client = BlobServiceClient.from_connection_string(AZURE_STORAGE_CONNECTION_STRING)
-
+container_client = blob_service_client.get_container_client(CONTAINER_NAME)
 # Create container if it doesn't exist
 try:
     container_client = blob_service_client.get_container_client(CONTAINER_NAME)
@@ -1070,6 +1071,60 @@ def get_users():
         return jsonify(users), 200
     except Exception as e:
         return jsonify({'error': f'Error retrieving users: {str(e)}'}), 500
+
+
+@app.route('/api/user-profile/<email>', methods=['GET'])
+def get_user_profile(email):
+    try:
+        # Sanitize email to prevent path traversal
+        if not email or '@' not in email:
+            return jsonify({"error": "Invalid email provided"}), 400
+
+        # Define blob paths
+        user_info_blob_path = f"{email}/userInfo.js"
+        profile_pic_blob_path = f"{email}/profilePic.png"
+
+        # Fetch userInfo.js
+        blob_client = container_client.get_blob_client(user_info_blob_path)
+        try:
+            user_info_data = blob_client.download_blob().readall().decode('utf-8')
+            user_info = json.loads(user_info_data)
+        except Exception as e:
+            return jsonify({"error": f"User info not found for {email}", "details": str(e)}), 404
+
+        # Fetch profile picture or use default
+        profile_pic_url = DEFAULT_PROFILE_PIC_URL
+        blob_client = container_client.get_blob_client(profile_pic_blob_path)
+        try:
+            # Check if profile picture exists
+            blob_client.get_blob_properties()
+            # Generate a SAS URL for the profile picture (with limited time access)
+            sas_token = blob_client.generate_shared_access_signature(
+                permission="read",
+                expiry=datetime.utcnow() + timedelta(hours=1)  # 1-hour access
+            )
+            profile_pic_url = f"{blob_client.url}?{sas_token}"
+        except Exception:
+            # If profile pic doesn't exist, keep the default URL
+            pass
+
+        # Prepare response
+        response = {
+            "full_name": user_info.get("full_name", ""),
+            "email": user_info.get("email", email),
+            "profession": user_info.get("profession", ""),
+            "gender": user_info.get("gender", ""),
+            "bio": user_info.get("bio", ""),
+            "age": user_info.get("age", 0),
+            "created_at": user_info.get("created_at", ""),
+            "email_verified": user_info.get("email_verified", False),
+            "profile_picture": profile_pic_url
+        }
+
+        return jsonify(response), 200
+
+    except Exception as e:
+        return jsonify({"error": "Error Fetching User Details", "details": str(e)}), 500
 
 
 @app.route('/api/health', methods=['GET'])
