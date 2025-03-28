@@ -1150,14 +1150,14 @@ def update_user_profile_grok(email):
     except Exception as e:
         return jsonify({"error": "Failed to update profile", "details": str(e)}), 500
 
-@app.route('/api/upload-profile-pic/<email>', methods=['POST'])
-def upload_profile_pic_grok(email):
+@app.route('/api/upload-profile-pic/<username>', methods=['POST'])
+def upload_profile_pic_grok(username):
     try:
         if 'profilePic' not in request.files:
             return jsonify({"error": "No file provided"}), 400
         
         file = request.files['profilePic']
-        blob_client = container_client.get_blob_client(f"{email}/profilePic.png")
+        blob_client = container_client.get_blob_client(f"{username}/profilePic.png")
         
         # Upload the new profile picture
         blob_client.upload_blob(file, overwrite=True)
