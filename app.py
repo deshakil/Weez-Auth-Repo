@@ -444,68 +444,178 @@ def forgot_password():
     }), 200
 
 
+# Endpoint to request a password reset and generate OTP
+@app.route('/api/request-password-reset', methods=['POST'])
+def request_password_reset():
+    data = request.get_json()
+    
+    if not data or not data.get('username'):
+        return jsonify({'error': 'Email is required'}), 400
+    
+    username = data.get('username').lower().strip()
+    
+    # Log the request
+    print(f"Password reset requested for: {username}")
+    
+    if username not in users_db:
+        # For security, we don't reveal whether the email exists or not
+        # But we log it for debugging
+        print(f"User {username} not found in database")
+        return jsonify({'message': 'If the email exists, a reset code has been sent'}), 200
+    
+    # Generate a 6-digit OTP
+    otp = ''.join(random.choices('0123456789', k=6))
+    
+    # Store the OTP with a 15-minute expiration and password reset flag
+    otps[username] = {
+        'otp': otp,
+        'expires': datetime.now(timezone.utc) + timedelta(minutes=15),
+        'for_password_reset': True
+    }
+    
+    print(f"Generated OTP for {username}: {otp}")
+    print(f"OTP expires at: {otps[username]['expires']}")
+    print(f"Current OTPs dictionary: {otps}")
+    
+    # In a real application, you would send an email with the OTP
+    # send_email(username, f"Your password reset code is: {otp}")
+    
+    return jsonify({
+        'message': 'Reset code sent to your email',
+        'debug_otp': otp  # Remove this in production!
+    }), 200
+
+
+# Endpoint to verify OTP
+@app.route('/api/verify-reset-otp', methods=['POST'])
+def verify_reset_otp():
+    data = request.get_json()
+    
+    if not data or not data.get('username') or not data.get('otp'):
+        return jsonify({'error': 'Email and OTP are required'}), 400
+    
+    username = data.get('username').lower().strip()
+    otp = data.get('otp')
+    
+    print(f"Verifying OTP for {username}: {otp}")
+    print(f"Current OTPs dictionary: {otps}")
+    
+    # Check if there's a valid OTP for this username
+    if username not in otps:
+        print(f"No OTP found for {username}")
+        return jsonify({'error': 'Invalid or expired reset code'}), 401
+    
+    if not otps[username].get('for_password_reset'):
+        print(f"OTP for {username} is not for password reset")
+        return jsonify({'error': 'Invalid reset code type'}), 401
+    
+    # Check if OTP is expired
+    if datetime.now(timezone.utc) > otps[username]['expires']:
+        print(f"OTP for {username} is expired")
+        del otps[username]
+        return jsonify({'error': 'Reset code expired. Please request a new one.'}), 401
+    
+    # Check if OTP matches
+    if otps[username]['otp'] != otp:
+        print(f"OTP mismatch for {username}. Expected: {otps[username]['otp']}, Got: {otp}")
+        return jsonify({'error': 'Invalid reset code'}), 401
+    
+    # OTP is valid
+    return jsonify({'message': 'OTP verified successfully'}), 200
+
+
+# Endpoint to reset password with OTP
 @app.route('/api/reset-password', methods=['POST'])
 def reset_password():
     data = request.get_json()
-
+    
+    # Validate input
     if not data or not data.get('username') or not data.get('otp') or not data.get('new_password'):
         return jsonify({'error': 'Email, OTP, and new password are required'}), 400
-
-    username = data['username']
-    otp = data['otp']
-    new_password = data['new_password']
-
+    
+    username = data.get('username').lower().strip()
+    otp = data.get('otp')
+    new_password = data.get('new_password')
+    
+    print(f"Reset password attempt for {username}")
+    print(f"Current OTPs dictionary: {otps}")
+    
+    # Validate username exists
     if username not in users_db:
+        print(f"User {username} not found in database")
         return jsonify({'error': 'Invalid email'}), 404
-
-    if username not in otps or not otps[username].get('for_password_reset'):
+    
+    # Validate OTP exists and is for password reset
+    if username not in otps:
+        print(f"No OTP found for {username}")
         return jsonify({'error': 'No valid password reset request found'}), 404
-
+    
+    if not otps[username].get('for_password_reset'):
+        print(f"OTP for {username} is not for password reset")
+        return jsonify({'error': 'Invalid reset request type'}), 401
+    
+    # Check if OTP is expired
     if datetime.now(timezone.utc) > otps[username]['expires']:
+        print(f"OTP for {username} is expired")
         del otps[username]
         return jsonify({'error': 'Reset code expired. Please request a new one.'}), 401
-
+    
+    # Validate OTP matches
     if otps[username]['otp'] != otp:
+        print(f"OTP mismatch for {username}. Expected: {otps[username]['otp']}, Got: {otp}")
         return jsonify({'error': 'Invalid reset code'}), 401
-
-    # Update password
-    new_password_hash = hashlib.sha256(new_password.encode()).hexdigest()
-    users_db[username]['password_hash'] = new_password_hash
-
+    
+    # Validate password meets requirements
+    if len(new_password) < 6:
+        return jsonify({'error': 'Password must be at least 6 characters'}), 400
+    
     try:
-        # Update userInfo.json with new password hash
-        blob_client = blob_service_client.get_blob_client(
-            container=CONTAINER_NAME,
-            blob=f"{username}/userInfo.json"
-        )
-
-        user_info_blob = blob_client.download_blob()
-        user_info = json.loads(user_info_blob.readall().decode('utf-8'))
-
-        # We don't want to store the password hash in the user info file
-        # But we're updating the last modified time
-        user_info['last_password_change'] = datetime.now().isoformat()
-
-        # Upload updated userInfo.json
-        blob_client.upload_blob(
-            json.dumps(user_info),
-            overwrite=True,
-            content_settings=ContentSettings(content_type='application/json')
-        )
+        # Update password
+        new_password_hash = hashlib.sha256(new_password.encode()).hexdigest()
+        users_db[username]['password_hash'] = new_password_hash
+        
+        print(f"Password updated for {username}")
+        
+        # Update userInfo.json with last password change timestamp
+        try:
+            blob_client = blob_service_client.get_blob_client(
+                container=CONTAINER_NAME,
+                blob=f"{username}/userInfo.json"
+            )
+            user_info_blob = blob_client.download_blob()
+            user_info = json.loads(user_info_blob.readall().decode('utf-8'))
+            
+            # Update the last password change timestamp
+            user_info['last_password_change'] = datetime.now().isoformat()
+            
+            # Upload updated userInfo.json
+            blob_client.upload_blob(
+                json.dumps(user_info),
+                overwrite=True,
+                content_settings=ContentSettings(content_type='application/json')
+            )
+            print(f"Updated userInfo.json for {username}")
+        except Exception as e:
+            print(f"Error updating user info file: {str(e)}")
+            # Continue anyway, as the password is updated in memory
+        
+        # Remove OTP
+        del otps[username]
+        print(f"Removed OTP for {username}")
+        
+        # Invalidate all tokens for this user
+        token_count = 0
+        for token_id in list(active_tokens.keys()):
+            if active_tokens[token_id]['username'] == username:
+                del active_tokens[token_id]
+                token_count += 1
+        print(f"Invalidated {token_count} tokens for {username}")
+        
+        return jsonify({'message': 'Password reset successfully'}), 200
+        
     except Exception as e:
-        print(f"Error updating user info: {str(e)}")
-        # Continue anyway, as the password is updated in memory
-
-    # Remove OTP
-    del otps[username]
-
-    # Invalidate all tokens for this user
-    for token_id in list(active_tokens.keys()):
-        if active_tokens[token_id]['username'] == username:
-            del active_tokens[token_id]
-
-    return jsonify({'message': 'Password reset successfully'}), 200
-
+        print(f"Error resetting password: {str(e)}")
+        return jsonify({'error': f'Internal server error: {str(e)}'}), 500
 
 @app.route('/api/logout', methods=['POST'])
 def logout():
