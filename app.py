@@ -445,6 +445,7 @@ def forgot_password():
 
 
 # Endpoint to request a password reset and generate OTP
+# Endpoint to request a password reset and generate OTP
 @app.route('/api/request-password-reset', methods=['POST'])
 def request_password_reset():
     data = request.get_json()
@@ -464,7 +465,7 @@ def request_password_reset():
         return jsonify({'message': 'If the email exists, a reset code has been sent'}), 200
     
     # Generate a 6-digit OTP
-    otp = ''.join(random.choices('0123456789', k=6))
+    otp = generate_otp()
     
     # Store the OTP with a 15-minute expiration and password reset flag
     otps[username] = {
@@ -475,17 +476,25 @@ def request_password_reset():
     
     print(f"Generated OTP for {username}: {otp}")
     print(f"OTP expires at: {otps[username]['expires']}")
-    print(f"Current OTPs dictionary: {otps}")
     
-    # In a real application, you would send an email with the OTP
-    # send_email(username, f"Your password reset code is: {otp}")
+    # Get user's name from the database if available
+    user_name = users_db[username].get('full_name', None)
     
-    return jsonify({
-        'message': 'Reset code sent to your email',
-        'debug_otp': otp  # Remove this in production!
-    }), 200
-
-
+    # Send the OTP email using your existing function
+    if not send_otp_email(username, otp, "password_reset", user_name):
+        print(f"Failed to send OTP email to {username}")
+        return jsonify({'error': 'Failed to send reset code'}), 500
+    
+    # Include debug_otp only in development environments
+    response_data = {
+        'message': 'Reset code sent to your email'
+    }
+    
+    # Conditionally add debug_otp if in development environment
+    # You can add a check like: if app.config['ENV'] == 'development':
+    response_data['debug_otp'] = otp  # Remove this in production!
+    
+    return jsonify(response_data), 200
 # Endpoint to verify OTP
 @app.route('/api/verify-reset-otp', methods=['POST'])
 def verify_reset_otp():
