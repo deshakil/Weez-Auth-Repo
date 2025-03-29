@@ -14,6 +14,8 @@ from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from azure.storage.blob import BlobServiceClient, ContentSettings
 from io import BytesIO
+from sendgrid import SendGridAPIClient
+from sendgrid.helpers.mail import Mail
 
 app = Flask(__name__)  # Use environment variable in production
 CORS(app)  # Enable Cross-Origin Resource Sharing
@@ -59,23 +61,21 @@ def generate_otp(length=6):
 
 
 def send_email(to_email, subject, body):
-    """Send an email with the provided subject and body."""
     try:
-        message = MIMEMultipart()
-        message['From'] = EMAIL_FROM
-        message['To'] = to_email
-        message['Subject'] = subject
-
-        message.attach(MIMEText(body, 'plain'))
-
-        server = smtplib.SMTP(EMAIL_HOST, EMAIL_PORT)
-        server.starttls()
-        server.login(EMAIL_USER, EMAIL_PASSWORD)
-        server.send_message(message)
-        server.quit()
+        message = Mail(
+            from_email='weatweez@gmail.com',  # Use your verified sender
+            to_emails=to_email,
+            subject=subject,
+            html_content=body
+        )
+        
+        sg = SendGridAPIClient(os.getenv('SENDGRID_API_KEY'))
+        response = sg.send(message)
+        
+        print(f"Email to {to_email} - Status: {response.status_code}")
         return True
     except Exception as e:
-        print(f"Error sending email: {str(e)}")
+        print(f"Email failed: {str(e)}")
         return False
 
 
