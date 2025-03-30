@@ -63,7 +63,7 @@ def generate_otp(length=6):
 def send_email(to_email, subject, body):
     try:
         message = Mail(
-            from_email='weatweez@gmail.com',  # Use your verified sender
+            from_email='support@weez.online',  # Use your verified sender
             to_emails=to_email,
             subject=subject,
             html_content=body
