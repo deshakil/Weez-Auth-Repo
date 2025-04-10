@@ -18,13 +18,7 @@ app = Flask(__name__)
 CORS(app)
 
 # Initialize Auth Dictionaries Container
-AUTH_CONTAINER_NAME = "auth-dictionaries"
-auth_container_client = blob_service_client.get_container_client(AUTH_CONTAINER_NAME)
-try:
-    if not auth_container_client.exists():
-        auth_container_client.create_container()
-except Exception as e:
-    print(f"Error initializing auth container: {str(e)}")
+
 
 # Azure Blob Storage configuration
 AZURE_STORAGE_CONNECTION_STRING = os.getenv('AZURE_STORAGE_CONNECTION_STRING_1')
@@ -44,6 +38,14 @@ try:
         container_client.create_container()
 except Exception as e:
     print(f"Error initializing container: {str(e)}")
+
+AUTH_CONTAINER_NAME = "auth-dictionaries"
+auth_container_client = blob_service_client.get_container_client(AUTH_CONTAINER_NAME)
+try:
+    if not auth_container_client.exists():
+        auth_container_client.create_container()
+except Exception as e:
+    print(f"Error initializing auth container: {str(e)}")
 
 # In-memory storage (replace with a database in production)
 users_db = {}
