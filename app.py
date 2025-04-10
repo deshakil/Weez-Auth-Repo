@@ -67,7 +67,7 @@ def generate_otp_for_user(username):
 def send_email(to_email, subject, body):
     try:
         message = Mail(
-            from_email='support@weez.online',
+            from_email='support@em3196.weez.online',
             to_emails=to_email,
             subject=subject,
             html_content=body
