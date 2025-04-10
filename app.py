@@ -9,9 +9,6 @@ import json
 import tempfile
 import random
 import string
-import smtplib
-from email.mime.text import MIMEText
-from email.mime.multipart import MIMEMultipart
 from azure.storage.blob import BlobServiceClient, ContentSettings
 from io import BytesIO
 from sendgrid import SendGridAPIClient
@@ -25,22 +22,15 @@ AZURE_STORAGE_CONNECTION_STRING = os.getenv('AZURE_STORAGE_CONNECTION_STRING_1')
 CONTAINER_NAME = "weez-users-info"
 DEFAULT_PROFILE_PIC_URL = "https://i.pinimg.com/736x/23/a6/1f/23a61f584822b8c7dbaebdca7c96da3e.jpg"
 
-# Email configuration for OTP
-EMAIL_HOST = os.getenv('EMAIL_HOST')
-EMAIL_PORT = 587
-EMAIL_USER = os.getenv('EMAIL_USER')
-EMAIL_PASSWORD = os.getenv('EMAIL_PASSWORD')
-EMAIL_FROM = os.getenv('EMAIL_SENDER')
-
-# **Added Test Credentials**
-TEST_EMAIL = "test@example.com"
-TEST_OTP = "123456"
+# SendGrid configuration
+SENDGRID_API_KEY = os.getenv('SENDGRID_API_KEY')
+if not SENDGRID_API_KEY:
+    raise ValueError("SENDGRID_API_KEY environment variable is not set")
 
 # Initialize the BlobServiceClient
 blob_service_client = BlobServiceClient.from_connection_string(AZURE_STORAGE_CONNECTION_STRING)
 container_client = blob_service_client.get_container_client(CONTAINER_NAME)
 try:
-    container_client = blob_service_client.get_container_client(CONTAINER_NAME)
     if not container_client.exists():
         container_client.create_container()
 except Exception as e:
@@ -57,14 +47,8 @@ def generate_otp(length=6):
     """Generate a random OTP of specified length."""
     return ''.join(random.choices(string.digits, k=length))
 
-# **Added Helper Function for OTP Generation**
-def generate_otp_for_user(username):
-    """Generate OTP, using TEST_OTP for the test email."""
-    if username == TEST_EMAIL:
-        return TEST_OTP
-    return generate_otp()
-
 def send_email(to_email, subject, body):
+    """Send an email using SendGrid."""
     try:
         message = Mail(
             from_email='support@em3196.weez.online',
@@ -72,15 +56,16 @@ def send_email(to_email, subject, body):
             subject=subject,
             html_content=body
         )
-        sg = SendGridAPIClient(os.getenv('SENDGRID_API_KEY'))
+        sg = SendGridAPIClient(SENDGRID_API_KEY)
         response = sg.send(message)
-        print(f"Email to {to_email} - Status: {response.status_code}")
-        return True
+        print(f"Email sent to {to_email} - Status: {response.status_code}")
+        return response.status_code == 202  # 202 is SendGrid's success status
     except Exception as e:
-        print(f"Email failed: {str(e)}")
+        print(f"Email failed to {to_email}: {str(e)}")
         return False
 
 def send_otp_email(email, otp, purpose="verification", user_name=None):
+    """Send OTP email with purpose-specific messaging."""
     subject = "Weez OTP Verification Code"
     greeting = f"Dear {user_name}," if user_name else "Dear Weez User,"
     purpose_display = {
@@ -90,23 +75,23 @@ def send_otp_email(email, otp, purpose="verification", user_name=None):
         "email_change": "email change"
     }.get(purpose, "verification")
     body = f"""
-    {greeting}
-
-    Welcome to Weez! To ensure the security of your account, please verify your email using the One-Time Password (OTP) below:
-
-    Your OTP: {otp}
-
-    This OTP is valid for 10 minutes and can only be used once.
-
-    Important Security Guidelines:
-    • Do not share this OTP with anyone, including Weez support staff.
-    • Do not enter your OTP on any unofficial websites or third-party apps.
-    • If you didn't request this OTP for {purpose_display}, please ignore this email or contact our support team immediately.
-
-    If you have any questions, feel free to reach out to us at weatweez@gmail.com.
-
-    Best regards,
-    The Weez Team
+    <html>
+    <body>
+        <p>{greeting}</p>
+        <p>Welcome to Weez! To ensure the security of your account, please verify your email using the One-Time Password (OTP) below:</p>
+        <h3>Your OTP: {otp}</h3>
+        <p>This OTP is valid for 10 minutes and can only be used once.</p>
+        <p><strong>Purpose:</strong> {purpose_display}</p>
+        <p><strong>Important Security Guidelines:</strong></p>
+        <ul>
+            <li>Do not share this OTP with anyone, including Weez support staff.</li>
+            <li>Do not enter your OTP on any unofficial websites or third-party apps.</li>
+            <li>If you didn't request this OTP, please ignore this email or contact our support team immediately.</li>
+        </ul>
+        <p>If you have any questions, feel free to reach out to us at <a href="mailto:weatweez@gmail.com">weatweez@gmail.com</a>.</p>
+        <p>Best regards,<br>The Weez Team</p>
+    </body>
+    </html>
     """
     return send_email(email, subject, body)
 
@@ -127,9 +112,7 @@ def register():
         return jsonify({'error': 'Email already registered but not verified'}), 409
 
     password_hash = hashlib.sha256(password.encode()).hexdigest()
-    
-    # **Modified OTP Generation**
-    otp = generate_otp_for_user(username)
+    otp = generate_otp()
     otp_expiry = datetime.now(timezone.utc) + timedelta(minutes=10)
 
     unverified_users[username] = {
@@ -145,10 +128,8 @@ def register():
 
     if not send_otp_email(email, otp, "verification"):
         return jsonify({'error': 'Failed to send verification email'}), 500
-    
-    # **Added Debugging**
-    print(f"OTP for {email}: {otp}")
 
+    print(f"OTP for {email}: {otp}")  # Debugging
     return jsonify({
         'message': 'Registration initiated. Please verify your email with the OTP sent.',
         'username': username
@@ -251,8 +232,7 @@ def resend_otp():
     else:
         return jsonify({'error': 'Invalid email or no pending verification'}), 404
 
-    # **Modified OTP Generation**
-    otp = generate_otp_for_user(username)
+    otp = generate_otp()
     otp_expiry = datetime.now(timezone.utc) + timedelta(minutes=10)
     current_otp_data = otps.get(username, {})
     otps[username] = {'otp': otp, 'expires': otp_expiry}
@@ -262,10 +242,8 @@ def resend_otp():
 
     if not send_otp_email(user_email, otp, purpose):
         return jsonify({'error': 'Failed to send verification email'}), 500
-    
-    # **Added Debugging**
-    print(f"OTP for {user_email}: {otp}")
-    
+
+    print(f"OTP for {user_email}: {otp}")  # Debugging
     return jsonify({'message': 'OTP sent successfully'}), 200
 
 @app.route('/api/login', methods=['POST'])
@@ -289,8 +267,7 @@ def login():
     if users_db[username]['password_hash'] != password_hash:
         return jsonify({'error': 'Invalid email or password'}), 401
 
-    # **Modified OTP Generation**
-    otp = generate_otp_for_user(username)
+    otp = generate_otp()
     otp_expiry = datetime.now(timezone.utc) + timedelta(minutes=10)
     otps[username] = {
         'otp': otp,
@@ -300,10 +277,8 @@ def login():
 
     if not send_otp_email(email, otp, "login"):
         return jsonify({'error': 'Failed to send login verification email'}), 500
-    
-    # **Added Debugging**
-    print(f"OTP for {email}: {otp}")
 
+    print(f"OTP for {email}: {otp}")  # Debugging
     return jsonify({
         'message': 'Login verification code sent to your email',
         'username': username
@@ -357,8 +332,7 @@ def forgot_password():
     if username not in users_db:
         return jsonify({'message': 'If the email exists, a reset code has been sent.'}), 200
 
-    # **Modified OTP Generation**
-    otp = generate_otp_for_user(username)
+    otp = generate_otp()
     otp_expiry = datetime.now(timezone.utc) + timedelta(minutes=10)
     otps[username] = {
         'otp': otp,
@@ -368,10 +342,8 @@ def forgot_password():
 
     if not send_otp_email(email, otp, "password_reset"):
         return jsonify({'error': 'Failed to send password reset email'}), 500
-    
-    # **Added Debugging**
-    print(f"OTP for {email}: {otp}")
 
+    print(f"OTP for {email}: {otp}")  # Debugging
     return jsonify({
         'message': 'Password reset code sent to your email',
         'username': username
@@ -382,43 +354,38 @@ def request_password_reset():
     data = request.get_json()
     if not data or not data.get('username'):
         return jsonify({'error': 'Email is required'}), 400
-    
+
     username = data.get('username').lower().strip()
     print(f"Password reset requested for: {username}")
-    
+
     if username not in users_db:
         print(f"User {username} not found in database")
         return jsonify({'message': 'If the email exists, a reset code has been sent'}), 200
-    
-    # **Modified OTP Generation**
-    otp = generate_otp_for_user(username)
+
+    otp = generate_otp()
     otps[username] = {
         'otp': otp,
         'expires': datetime.now(timezone.utc) + timedelta(minutes=15),
         'for_password_reset': True
     }
-    
-    print(f"Generated OTP for {username}: {otp}")
+
     user_name = users_db[username].get('full_name', None)
-    
     if not send_otp_email(username, otp, "password_reset", user_name):
         print(f"Failed to send OTP email to {username}")
         return jsonify({'error': 'Failed to send reset code'}), 500
-    
-    # **Added Debugging**
-    print(f"OTP for {username}: {otp}")
-    response_data = {'message': 'Reset code sent to your email'}
-    return jsonify(response_data), 200
+
+    print(f"OTP for {username}: {otp}")  # Debugging
+    return jsonify({'message': 'Reset code sent to your email'}), 200
 
 @app.route('/api/verify-reset-otp', methods=['POST'])
 def verify_reset_otp():
     data = request.get_json()
     if not data or not data.get('username') or not data.get('otp'):
         return jsonify({'error': 'Email and OTP are required'}), 400
-    
+
     username = data.get('username').lower().strip()
     otp = data.get('otp')
-    
+
     print(f"Verifying OTP for {username}: {otp}")
     if username not in otps or not otps[username].get('for_password_reset'):
         return jsonify({'error': 'Invalid or expired reset code'}), 401
@@ -427,7 +394,7 @@ def verify_reset_otp():
         return jsonify({'error': 'Reset code expired. Please request a new one.'}), 401
     if otps[username]['otp'] != otp:
         return jsonify({'error': 'Invalid reset code'}), 401
-    
+
     return jsonify({'message': 'OTP verified successfully'}), 200
 
 @app.route('/api/reset-password', methods=['POST'])
@@ -435,11 +402,11 @@ def reset_password():
     data = request.get_json()
     if not data or not data.get('username') or not data.get('otp') or not data.get('new_password'):
         return jsonify({'error': 'Email, OTP, and new password are required'}), 400
-    
+
     username = data.get('username').lower().strip()
     otp = data.get('otp')
     new_password = data.get('new_password')
-    
+
     if username not in users_db:
         return jsonify({'error': 'Invalid email'}), 404
     if username not in otps or not otps[username].get('for_password_reset'):
@@ -449,10 +416,10 @@ def reset_password():
         return jsonify({'error': 'Reset code expired. Please request a new one.'}), 401
     if otps[username]['otp'] != otp:
         return jsonify({'error': 'Invalid reset code'}), 401
-    
+
     if len(new_password) < 6:
         return jsonify({'error': 'Password must be at least 6 characters'}), 400
-    
+
     try:
         new_password_hash = hashlib.sha256(new_password.encode()).hexdigest()
         users_db[username]['password_hash'] = new_password_hash
@@ -638,8 +605,7 @@ def change_email():
     if new_email in users_db:
         return jsonify({'error': 'Email already registered'}), 409
 
-    # **Modified OTP Generation**
-    otp = generate_otp_for_user(username)
+    otp = generate_otp()
     otp_expiry = datetime.now(timezone.utc) + timedelta(minutes=10)
     otps[username] = {
         'otp': otp,
@@ -650,10 +616,8 @@ def change_email():
 
     if not send_otp_email(username, otp, "email_change"):
         return jsonify({'error': 'Failed to send verification email'}), 500
-    
-    # **Added Debugging**
-    print(f"OTP for {username}: {otp}")
 
+    print(f"OTP for {username}: {otp}")  # Debugging
     return jsonify({'message': 'Verification code sent to your current email'}), 200
 
 @app.route('/api/verify-current-email', methods=['POST'])
@@ -676,9 +640,7 @@ def verify_current_email():
         return jsonify({'error': 'Invalid verification code'}), 401
 
     new_email = otps[username]['new_email']
-    
-    # **Modified OTP Generation**
-    new_otp = generate_otp_for_user(username)
+    new_otp = generate_otp()
     new_otp_expiry = datetime.now(timezone.utc) + timedelta(minutes=10)
     otps[username] = {
         'otp': new_otp,
@@ -689,10 +651,8 @@ def verify_current_email():
 
     if not send_otp_email(new_email, new_otp, "email_change"):
         return jsonify({'error': 'Failed to send verification email to new address'}), 500
-    
-    # **Added Debugging**
-    print(f"OTP for {new_email}: {new_otp}")
 
+    print(f"OTP for {new_email}: {new_otp}")  # Debugging
     return jsonify({'message': 'Verification code sent to new email'}), 200
 
 @app.route('/api/verify-email-change', methods=['POST'])
