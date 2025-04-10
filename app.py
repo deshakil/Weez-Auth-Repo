@@ -142,9 +142,9 @@ def register():
         return jsonify({'error': 'Email already registered but not verified'}), 409
 
     # Update dictionaries
-    unverified_users[username] = { /* user data */ }
+    unverified_users[username] = { }
     otps = load_auth_data('otps.json')
-    otps[username] = { /* otp data with ISO datetime */ }
+    otps[username] = { }
     
     # Save updated data
     save_auth_data('unverified_users.json', unverified_users)
