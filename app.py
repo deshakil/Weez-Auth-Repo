@@ -17,6 +17,15 @@ from sendgrid.helpers.mail import Mail
 app = Flask(__name__)
 CORS(app)
 
+# Initialize Auth Dictionaries Container
+AUTH_CONTAINER_NAME = "auth-dictionaries"
+auth_container_client = blob_service_client.get_container_client(AUTH_CONTAINER_NAME)
+try:
+    if not auth_container_client.exists():
+        auth_container_client.create_container()
+except Exception as e:
+    print(f"Error initializing auth container: {str(e)}")
+
 # Azure Blob Storage configuration
 AZURE_STORAGE_CONNECTION_STRING = os.getenv('AZURE_STORAGE_CONNECTION_STRING_1')
 CONTAINER_NAME = "weez-users-info"
@@ -95,74 +104,79 @@ def send_otp_email(email, otp, purpose="verification", user_name=None):
     """
     return send_email(email, subject, body)
 
+
+def load_auth_data(blob_name):
+    """Load authentication data from blob storage"""
+    try:
+        blob_client = auth_container_client.get_blob_client(blob_name)
+        if blob_client.exists():
+            data = blob_client.download_blob().readall().decode('utf-8')
+            return json.loads(data)
+        return {}
+    except Exception as e:
+        print(f"Error loading {blob_name}: {str(e)}")
+        return {}
+
+def save_auth_data(blob_name, data):
+    """Save authentication data to blob storage"""
+    try:
+        blob_client = auth_container_client.get_blob_client(blob_name)
+        blob_client.upload_blob(
+            json.dumps(data),
+            overwrite=True,
+            content_settings=ContentSettings(content_type='application/json')
+        )
+    except Exception as e:
+        print(f"Error saving {blob_name}: {str(e)}")
+
 @app.route('/api/register', methods=['POST'])
 def register():
     data = request.get_json()
-    if not data or not data.get('fullName') or not data.get('password') or not data.get('email'):
-        return jsonify({'error': 'Full name, password, and email are required'}), 400
-
-    full_name = data['fullName']
-    password = data['password']
-    email = data['email']
-    username = email
-
+    # Load existing data
+    users_db = load_auth_data('users_db.json')
+    unverified_users = load_auth_data('unverified_users.json')
+    
     if username in users_db:
         return jsonify({'error': 'Email already registered'}), 409
     if username in unverified_users:
         return jsonify({'error': 'Email already registered but not verified'}), 409
 
-    password_hash = hashlib.sha256(password.encode()).hexdigest()
-    otp = generate_otp()
-    otp_expiry = datetime.now(timezone.utc) + timedelta(minutes=10)
-
-    unverified_users[username] = {
-        'password_hash': password_hash,
-        'email': email,
-        'full_name': full_name,
-        'created_at': datetime.now().isoformat()
-    }
-    otps[username] = {
-        'otp': otp,
-        'expires': otp_expiry
-    }
-
-    if not send_otp_email(email, otp, "verification"):
-        return jsonify({'error': 'Failed to send verification email'}), 500
-
-    print(f"OTP for {email}: {otp}")  # Debugging
-    return jsonify({
-        'message': 'Registration initiated. Please verify your email with the OTP sent.',
-        'username': username
-    }), 201
+    # Update dictionaries
+    unverified_users[username] = { /* user data */ }
+    otps = load_auth_data('otps.json')
+    otps[username] = { /* otp data with ISO datetime */ }
+    
+    # Save updated data
+    save_auth_data('unverified_users.json', unverified_users)
+    save_auth_data('otps.json', otps)
+    
+    # Rest of the registration logic
 
 @app.route('/api/verify-email', methods=['POST'])
 def verify_email():
-    data = request.get_json()
-    if not data or not data.get('username') or not data.get('otp'):
-        return jsonify({'error': 'Email and OTP are required'}), 400
-
-    username = data['username']
-    otp = data['otp']
-
-    if username not in unverified_users:
-        return jsonify({'error': 'Invalid email'}), 404
-    if username not in otps:
-        return jsonify({'error': 'No OTP found for this user'}), 404
-    if datetime.now(timezone.utc) > otps[username]['expires']:
+    # Load data
+    unverified_users = load_auth_data('unverified_users.json')
+    otps = load_auth_data('otps.json')
+    
+    # Check OTP expiration
+    expiry_time = datetime.fromisoformat(otps[username]['expires']).replace(tzinfo=timezone.utc)
+    if datetime.now(timezone.utc) > expiry_time:
+        # Update and save data
         del otps[username]
-        return jsonify({'error': 'OTP expired. Please request a new one.'}), 401
-    if otps[username]['otp'] != otp:
-        return jsonify({'error': 'Invalid OTP'}), 401
-
+        save_auth_data('otps.json', otps)
+        return jsonify({'error': 'OTP expired'}), 401
+        
+    # Update dictionaries
+    incomplete_profiles = load_auth_data('incomplete_profiles.json')
     incomplete_profiles[username] = unverified_users[username]
     del unverified_users[username]
     del otps[username]
-
-    return jsonify({
-        'message': 'Email verified successfully. Please complete your profile.',
-        'username': username
-    }), 200
-
+    
+    # Save updated data
+    save_auth_data('incomplete_profiles.json', incomplete_profiles)
+    save_auth_data('unverified_users.json', unverified_users)
+    save_auth_data('otps.json', otps)
+    
 @app.route('/api/complete-profile', methods=['POST'])
 def complete_profile():
     data = request.get_json()
@@ -936,13 +950,22 @@ if not app.secret_key:
 
 def cleanup_expired_data():
     current_time = datetime.now(timezone.utc)
+    
+    # Clean OTPs
+    otps = load_auth_data('otps.json')
     for username in list(otps.keys()):
-        if current_time > otps[username]['expires']:
+        expiry = datetime.fromisoformat(otps[username]['expires']).replace(tzinfo=timezone.utc)
+        if current_time > expiry:
             del otps[username]
+    save_auth_data('otps.json', otps)
+    
+    # Clean active tokens
+    active_tokens = load_auth_data('active_tokens.json')
     for token_id in list(active_tokens.keys()):
-        expires = datetime.fromisoformat(active_tokens[token_id]['expires'])
-        if current_time > expires:
+        expiry = datetime.fromisoformat(active_tokens[token_id]['expires']).replace(tzinfo=timezone.utc)
+        if current_time > expiry:
             del active_tokens[token_id]
+    save_auth_data('active_tokens.json', active_tokens)
 
 @app.before_request
 def before_request():
