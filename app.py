@@ -317,26 +317,38 @@ def verify_login():
 def forgot_password():
     email = request.json.get('email', '').lower().strip()
     
-    users_db = load_auth_data('users_db.json')
-    if email not in users_db:
-        return jsonify({'message': 'If email exists, reset code will be sent'}), 200
+    # Check if user exists in blob container instead of users_db
+    try:
+        blob_client = container_client.get_blob_client(f"{email}/userInfo.json")
+        if not blob_client.exists():
+            # Don't reveal that the email doesn't exist, but don't send OTP either
+            return jsonify({'message': 'If email exists, reset code will be sent'}), 200
+        
+        # User exists, proceed with OTP
+        user_info = json.loads(blob_client.download_blob().readall())
+        user_name = user_info.get('name', '') or user_info.get('full_name', '')
+        
+        otp = generate_otp()
+        otps = load_auth_data('otps.json')
+        otps[email] = {
+            'otp': otp,
+            'expires': (datetime.now(timezone.utc) + timedelta(minutes=15)).isoformat(),
+            'purpose': 'password_reset'
+        }
+        
+        if not save_auth_data('otps.json', otps):
+            return jsonify({'error': 'Failed to process request'}), 500
 
-    otp = generate_otp()
-    otps = load_auth_data('otps.json')
-    otps[email] = {
-        'otp': otp,
-        'expires': (datetime.now(timezone.utc) + timedelta(minutes=15)).isoformat(),
-        'purpose': 'password_reset'
-    }
+        if not send_otp_email(email, otp, "password_reset", user_name):
+            return jsonify({'error': 'Failed to send reset code'}), 500
+
+        return jsonify({'message': 'Reset code sent to email'}), 200
     
-    if not save_auth_data('otps.json', otps):
-        return jsonify({'error': 'Failed to process request'}), 500
-
-    user_name = users_db[email].get('full_name')
-    if not send_otp_email(email, otp, "password_reset", user_name):
-        return jsonify({'error': 'Failed to send reset code'}), 500
-
-    return jsonify({'message': 'Reset code sent to email'}), 200
+    except Exception as e:
+        # Log the error but don't reveal it to the user
+        print(f"Error in forgot_password for {email}: {str(e)}")
+        # Return success message even if there was an error to prevent email enumeration
+        return jsonify({'message': 'If email exists, reset code will be sent'}), 200
 
 @app.route('/api/reset-password', methods=['POST'])
 def reset_password():
