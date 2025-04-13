@@ -252,32 +252,45 @@ def login():
     email = data.get('email', '').lower().strip()
     password = data.get('password', '')
 
-    users_db = load_auth_data('users_db.json')
-    if email not in users_db:
+    # Check if user exists in blob container instead of users_db
+    try:
+        blob_client = container_client.get_blob_client(f"{email}/userInfo.json")
+        if not blob_client.exists():
+            return jsonify({'error': 'Invalid credentials'}), 401
+        
+        user_info = json.loads(blob_client.download_blob().readall())
+        
+        # Verify password if password_hash exists in user_info
+        if 'password_hash' in user_info:
+            password_hash = hashlib.sha256(password.encode()).hexdigest()
+            if user_info['password_hash'] != password_hash:
+                return jsonify({'error': 'Invalid credentials'}), 401
+        else:
+            # For users who may have registered through other means (e.g., Google)
+            return jsonify({'error': 'Password login not enabled for this account'}), 401
+
+        # Generate login OTP
+        otp = generate_otp()
+        otps = load_auth_data('otps.json')
+        otps[email] = {
+            'otp': otp,
+            'expires': (datetime.now(timezone.utc) + timedelta(minutes=10)).isoformat(),
+            'purpose': 'login'
+        }
+
+        if not save_auth_data('otps.json', otps):
+            return jsonify({'error': 'Failed to generate OTP'}), 500
+
+        user_name = user_info.get('name', '') or user_info.get('full_name', '')
+        if not send_otp_email(email, otp, "login", user_name):
+            return jsonify({'error': 'Failed to send OTP'}), 500
+
+        return jsonify({'message': 'OTP sent to email', 'email': email}), 200
+    
+    except Exception as e:
+        print(f"Login error for {email}: {str(e)}")
         return jsonify({'error': 'Invalid credentials'}), 401
-
-    # Verify password
-    password_hash = hashlib.sha256(password.encode()).hexdigest()
-    if users_db[email]['password_hash'] != password_hash:
-        return jsonify({'error': 'Invalid credentials'}), 401
-
-    # Generate login OTP
-    otp = generate_otp()
-    otps = load_auth_data('otps.json')
-    otps[email] = {
-        'otp': otp,
-        'expires': (datetime.now(timezone.utc) + timedelta(minutes=10)).isoformat(),
-        'purpose': 'login'
-    }
-
-    if not save_auth_data('otps.json', otps):
-        return jsonify({'error': 'Failed to generate OTP'}), 500
-
-    if not send_otp_email(email, otp, "login", users_db[email].get('full_name')):
-        return jsonify({'error': 'Failed to send OTP'}), 500
-
-    return jsonify({'message': 'OTP sent to email', 'email': email}), 200
-
+        
 @app.route('/api/verify-login', methods=['POST'])
 def verify_login():
     data = request.get_json()
