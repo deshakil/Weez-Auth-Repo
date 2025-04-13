@@ -23,10 +23,23 @@ CONTAINER_NAME = "weez-users-info"
 AUTH_CONTAINER_NAME = "auth-dictionaries"
 DEFAULT_PROFILE_PIC_URL = "https://i.pinimg.com/736x/23/a6/1f/23a61f584822b8c7dbaebdca7c96da3e.jpg"
 
-# Initialize Azure clients
+# Initialize the BlobServiceClient
 blob_service_client = BlobServiceClient.from_connection_string(AZURE_STORAGE_CONNECTION_STRING)
 container_client = blob_service_client.get_container_client(CONTAINER_NAME)
+try:
+    if not container_client.exists():
+        container_client.create_container()
+except Exception as e:
+    print(f"Error initializing container: {str(e)}")
+
+AUTH_CONTAINER_NAME = "auth-dictionaries"
 auth_container_client = blob_service_client.get_container_client(AUTH_CONTAINER_NAME)
+try:
+    if not auth_container_client.exists():
+        auth_container_client.create_container()
+except Exception as e:
+    print(f"Error initializing auth container: {str(e)}")
+
 
 # Ensure containers exist
 for client, name in [(container_client, CONTAINER_NAME), (auth_container_client, AUTH_CONTAINER_NAME)]:
@@ -360,7 +373,7 @@ def reset_password():
     otps = load_auth_data('otps.json')
     stored_otp = otps.get(email, {})
     
-    if stored_otp.get('purpose') != 'password_reset':
+    if not stored_otp or stored_otp.get('purpose') != 'password_reset':
         return jsonify({'error': 'Invalid reset attempt'}), 401
 
     if stored_otp['otp'] != otp:
@@ -375,29 +388,32 @@ def reset_password():
     if len(new_password) < 6:
         return jsonify({'error': 'Password must be at least 6 characters'}), 400
 
-    # Update password
-    users_db = load_auth_data('users_db.json')
-    users_db[email]['password_hash'] = hashlib.sha256(new_password.encode()).hexdigest()
-    
-    # Update user info in main container
+    # Update password in blob storage
     try:
+        # Get the user info from blob storage
         blob_client = container_client.get_blob_client(f"{email}/userInfo.json")
         user_info = json.loads(blob_client.download_blob().readall())
+        
+        # Update password hash and record the change time
+        user_info['password_hash'] = hashlib.sha256(new_password.encode()).hexdigest()
         user_info['last_password_change'] = datetime.now(timezone.utc).isoformat()
-        blob_client.upload_blob(json.dumps(user_info), overwrite=True)
+        
+        # Upload updated user info
+        blob_client.upload_blob(
+            json.dumps(user_info),
+            overwrite=True,
+            content_settings=ContentSettings(content_type='application/json')
+        )
+        
+        # Cleanup OTP
+        del otps[email]
+        save_auth_data('otps.json', otps)
+        
+        return jsonify({'message': 'Password reset successfully'}), 200
+    
     except Exception as e:
         return jsonify({'error': f'Failed to update password: {str(e)}'}), 500
-
-    # Cleanup
-    del otps[email]
-    if not all([
-        save_auth_data('users_db.json', users_db),
-        save_auth_data('otps.json', otps)
-    ]):
-        return jsonify({'error': 'Failed to complete password reset'}), 500
-
-    return jsonify({'message': 'Password reset successfully'}), 200
-
+        
 # Profile endpoints
 @app.route('/api/user-profile', methods=['GET'])
 def get_user_profile():
