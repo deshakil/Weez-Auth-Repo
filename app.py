@@ -342,7 +342,7 @@ def verify_login():
 
 @app.route('/api/forgot-password', methods=['POST'])
 def forgot_password():
-    email = request.json.get('email', '').lower().strip()
+    email = request.json.get('email', '').lower()
     
     # Check if user exists in blob container instead of users_db
     try:
