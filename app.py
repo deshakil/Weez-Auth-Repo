@@ -456,6 +456,31 @@ def get_user_profile():
     except Exception as e:
         return jsonify({'error': f'Profile not found: {str(e)}'}), 404
 
+
+@app.route('/api/forgot-password/verify', methods=['POST'])
+def verify_reset_otp():
+    data = request.get_json()
+    email = data.get('email', '').lower().strip()
+    otp = data.get('otp', '')
+
+    otps = load_auth_data('otps.json')
+    stored_otp = otps.get(email, {})
+    
+    if not stored_otp or stored_otp.get('purpose') != 'password_reset':
+        return jsonify({'error': 'No pending verification for this email'}), 401
+
+    if stored_otp['otp'] != otp:
+        return jsonify({'error': 'Invalid OTP'}), 401
+
+    expiry_time = datetime.fromisoformat(stored_otp['expires']).replace(tzinfo=timezone.utc)
+    if datetime.now(timezone.utc) > expiry_time:
+        del otps[email]
+        save_auth_data('otps.json', otps)
+        return jsonify({'error': 'OTP expired'}), 401
+    
+    # OTP is valid - don't delete it yet as we'll need it for the actual password reset
+    return jsonify({'message': 'OTP verified successfully'}), 200
+
 @app.route('/api/profile-picture', methods=['POST'])
 def upload_profile_picture():
     auth_header = request.headers.get('Authorization', '')
