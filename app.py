@@ -67,7 +67,7 @@ def save_auth_data(blob_name, data):
         blob_client.upload_blob(
             json.dumps(data),
             overwrite=True,
-            content_settings=ContentSettings(content_type='application/json')
+            content_settings=ContentSettings(content_type='application/json'))
         return True
     except Exception as e:
         print(f"Error saving {blob_name}: {str(e)}")
