@@ -457,7 +457,7 @@ def get_user_profile():
         return jsonify({'error': f'Profile not found: {str(e)}'}), 404
 
 
-@app.route('/api/forgot-password/verify', methods=['POST'])
+@app.route('/api/verify-forgot-password', methods=['POST'])
 def verify_reset_otp():
     data = request.get_json()
     email = data.get('email', '').lower().strip()
