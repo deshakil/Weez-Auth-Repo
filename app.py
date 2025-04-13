@@ -225,6 +225,7 @@ def complete_profile():
             json.dumps(user_info),
             overwrite=True,
             content_settings=ContentSettings(content_type='application/json')
+        )  # FIXED: Added missing closing parenthesis
         
         # Update users database
         users_db = load_auth_data('users_db.json')
@@ -481,6 +482,7 @@ def upload_profile_picture():
             file.read(),
             overwrite=True,
             content_settings=ContentSettings(content_type='image/png')
+        )  # FIXED: Added missing closing parenthesis
         return jsonify({'message': 'Profile picture updated'}), 200
     except Exception as e:
         return jsonify({'error': f'Upload failed: {str(e)}'}), 500
