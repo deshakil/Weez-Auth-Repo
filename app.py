@@ -512,6 +512,44 @@ def upload_profile_picture():
     except Exception as e:
         return jsonify({'error': f'Upload failed: {str(e)}'}), 500
 
+
+
+@app.route('/api/register-profile-picture', methods=['POST'])
+def upload_register_profile_picture():
+    email = request.args.get('email')
+    if not email:
+        return jsonify({'error': 'Email is required'}), 400
+    
+    if 'profile_pic' not in request.files:
+        return jsonify({'error': 'No file uploaded'}), 400
+    
+    file = request.files['profile_pic']
+    if not file.filename.lower().endswith(('.png', '.jpg', '.jpeg')):
+        return jsonify({'error': 'Invalid file type'}), 400
+
+    try:
+        # Verify this email exists in unverified or incomplete profiles
+        incomplete_profiles = load_auth_data('incomplete_profiles.json')
+        unverified_users = load_auth_data('unverified_users.json')
+        
+        if email not in incomplete_profiles and email not in unverified_users:
+            return jsonify({'error': 'User not found in registration process'}), 404
+            
+        blob_client = container_client.get_blob_client(f"{email}/profilePic.png")
+        blob_client.upload_blob(
+            file.read(),
+            overwrite=True,
+            content_settings=ContentSettings(content_type='image/png')
+        )
+        return jsonify({
+            'message': 'Profile picture updated',
+            'imageUrl': f"https://yourcdn.com/{email}/profilePic.png"  # Adjust URL as needed
+        }), 200
+    except Exception as e:
+        return jsonify({'error': f'Upload failed: {str(e)}'}), 500
+
+
+
 # Additional endpoints (health check, etc.)
 @app.route('/api/health', methods=['GET'])
 def health_check():
