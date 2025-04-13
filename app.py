@@ -460,7 +460,7 @@ def get_user_profile():
 @app.route('/api/forgot-password/verify', methods=['POST'])
 def verify_reset_otp():
     data = request.get_json()
-    email = data.get('username', '').lower().strip()
+    email = data.get('email', '').lower().strip()
     otp = data.get('otp', '')
 
     otps = load_auth_data('otps.json')
