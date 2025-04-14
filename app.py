@@ -46,6 +46,46 @@ for client, name in [(container_client, CONTAINER_NAME), (auth_container_client,
     if not client.exists():
         client.create_container()
 
+# Test user configuration
+TEST_USER_EMAIL = "testuser@weez.com"
+TEST_USER_PASSWORD = "testuser@weez"
+TEST_USER_OTP = "123456"
+TEST_USER_DATA = {
+    "email": TEST_USER_EMAIL,
+    "password_hash": hashlib.sha256(TEST_USER_PASSWORD.encode()).hexdigest(),
+    "full_name": "Test User",
+    "profession": "Software Tester",
+    "gender": "Other",
+    "age": 30,
+    "bio": "This is a test account for QA purposes",
+    "email_verified": True,
+    "created_at": datetime.now(timezone.utc).isoformat()
+}
+
+# Create test user if it doesn't exist
+def initialize_test_user():
+    try:
+        # Check if test user exists in main container
+        blob_client = container_client.get_blob_client(f"{TEST_USER_EMAIL}/userInfo.json")
+        if not blob_client.exists():
+            # Create test user in main container
+            blob_client.upload_blob(
+                json.dumps(TEST_USER_DATA),
+                overwrite=True,
+                content_settings=ContentSettings(content_type='application/json')
+            )
+            
+            # Add test user to users_db
+            users_db = load_auth_data('users_db.json')
+            users_db[TEST_USER_EMAIL] = {
+                'password_hash': TEST_USER_DATA['password_hash'],
+                'full_name': TEST_USER_DATA['full_name']
+            }
+            save_auth_data('users_db.json', users_db)
+            print("Test user created successfully")
+    except Exception as e:
+        print(f"Error initializing test user: {str(e)}")
+
 # Helper functions
 def generate_otp(length=6):
     return ''.join(random.choices(string.digits, k=length))
@@ -225,7 +265,7 @@ def complete_profile():
             json.dumps(user_info),
             overwrite=True,
             content_settings=ContentSettings(content_type='application/json')
-        )  # FIXED: Added missing closing parenthesis
+        )
         
         # Update users database
         users_db = load_auth_data('users_db.json')
@@ -252,6 +292,21 @@ def login():
     data = request.get_json()
     email = data.get('email', '').lower().strip()
     password = data.get('password', '')
+
+    # Special case for test user with automatic OTP
+    if email == TEST_USER_EMAIL and password == TEST_USER_PASSWORD:
+        otps = load_auth_data('otps.json')
+        otps[email] = {
+            'otp': TEST_USER_OTP,
+            'expires': (datetime.now(timezone.utc) + timedelta(minutes=10)).isoformat(),
+            'purpose': 'login'
+        }
+        save_auth_data('otps.json', otps)
+        return jsonify({
+            'message': 'OTP sent to email', 
+            'email': email,
+            'note': 'For test user, use OTP: ' + TEST_USER_OTP
+        }), 200
 
     # Check if user exists in blob container instead of users_db
     try:
@@ -343,6 +398,20 @@ def verify_login():
 @app.route('/api/forgot-password', methods=['POST'])
 def forgot_password():
     email = request.json.get('email', '').lower()
+    
+    # Special case for test user
+    if email == TEST_USER_EMAIL:
+        otps = load_auth_data('otps.json')
+        otps[email] = {
+            'otp': TEST_USER_OTP,
+            'expires': (datetime.now(timezone.utc) + timedelta(minutes=15)).isoformat(),
+            'purpose': 'password_reset'
+        }
+        save_auth_data('otps.json', otps)
+        return jsonify({
+            'message': 'Reset code sent to email',
+            'note': 'For test user, use OTP: ' + TEST_USER_OTP
+        }), 200
     
     # Check if user exists in blob container instead of users_db
     try:
@@ -507,12 +576,10 @@ def upload_profile_picture():
             file.read(),
             overwrite=True,
             content_settings=ContentSettings(content_type='image/png')
-        )  # FIXED: Added missing closing parenthesis
+        )
         return jsonify({'message': 'Profile picture updated'}), 200
     except Exception as e:
         return jsonify({'error': f'Upload failed: {str(e)}'}), 500
-
-
 
 @app.route('/api/register-profile-picture', methods=['POST'])
 def upload_register_profile_picture():
@@ -548,8 +615,6 @@ def upload_register_profile_picture():
     except Exception as e:
         return jsonify({'error': f'Upload failed: {str(e)}'}), 500
 
-
-
 # Additional endpoints (health check, etc.)
 @app.route('/api/health', methods=['GET'])
 def health_check():
@@ -557,10 +622,13 @@ def health_check():
         'status': 'healthy',
         'timestamp': datetime.now(timezone.utc).isoformat(),
         'auth_container': auth_container_client.exists(),
-        'main_container': container_client.exists()
+        'main_container': container_client.exists(),
+        'test_user_available': TEST_USER_EMAIL
     }), 200
 
 if __name__ == '__main__':
+    # Initialize test user on startup
+    initialize_test_user()
     port = int(os.getenv('PORT', 5000))
     debug = os.getenv('FLASK_ENV') == 'development'
     app.run(host='0.0.0.0', port=port, debug=debug)
